@@ -11,7 +11,11 @@ from enterprise.signals.gp_signals import ecorr_basis_prior, BasisGP
 
 @function
 def create_quantization_matrix_Umat(toas, dt=1, nmin=2):
-    """Create quantization matrix mapping TOAs to observing epochs."""
+    """Create quantization matrix mapping TOAs to observing epochs.
+    This was created at the begining just to understand how the entries in 
+    quantization matrix affect the sampled values of parameters
+    
+    """
     isort = np.argsort(toas)
 
     bucket_ref = [toas[isort[0]]]
@@ -38,7 +42,12 @@ def create_quantization_matrix_Umat(toas, dt=1, nmin=2):
 
 @function
 def create_quantization_matrix_freq(toas, freqs, dt=1, nmin=2):
-    """Create quantization matrix mapping TOAs to observing epochs."""
+    """Create quantization matrix mapping TOAs to observing epochs.
+    
+    This was created when the eigenvector implementation was still not known and
+    we were trying to incormporate new jitter model through rank 1 approximation.
+    
+    """
     fc=np.median(freqs)
     isort = np.argsort(toas)
 
@@ -64,9 +73,61 @@ def create_quantization_matrix_freq(toas, freqs, dt=1, nmin=2):
 
     return U, weights
 
+@function
+def create_quantization_matrix_eig(toas, freqs, dt=1, nmin=2,Q=None):
+    """Create quantization matrix mapping TOAs to observing epochs.
+    
+    This function can be used for creating quantization matrix containing eigenvectors 
+    corresponding to each eigenvalue
+
+    There are few different things:
+    1. Using the spline fit of original eigenvectors in which case following is used
+    >>> U[ind, i] = BSpline(*(Q))(freqs[ind])
+    Here Q has to be the "splrep" object which contains information of spline fit
+
+    2. Using the straight line approximation  for eigenvectors:
+    >>>if None in Q:
+                U[ind, i] = 1
+        else :
+                U[ind, i] = Q[0]*(freqs[ind]-Q[1])
+
+    Here passing None in Q will get us (1,..,1)^T as the first eigenvector,
+    and passing [centrefreq, slope] in Q will get get us second eigenvector.
+
+
+    """
+    fc=np.median(freqs)
+    isort = np.argsort(toas)
+
+    bucket_ref = [toas[isort[0]]]
+    bucket_ind = [[isort[0]]]
+
+    for i in isort[1:]:
+        if toas[i] - bucket_ref[-1] < dt:
+            bucket_ind[-1].append(i)
+        else:
+            bucket_ref.append(toas[i])
+            bucket_ind.append([i])
+
+    # find only epochs with more than 1 TOA
+    bucket_ind2 = [ind for ind in bucket_ind if len(ind) >= nmin]
+
+    U = np.zeros((len(toas), len(bucket_ind2)), "d")
+    for i, l in enumerate(bucket_ind2):
+        for ind in l:
+            if None in Q:
+                U[ind, i] = 1
+            else :
+                U[ind, i] = Q[0]*(freqs[ind]-Q[1])
+            #U[ind, i] = BSpline(*(Q))(freqs[ind])
+
+    weights = np.ones(U.shape[1])
+
+    return U, weights
 
 
 def EcorrBasisModel_Umat(
+    Q,
     log10_ecorr=parameter.Uniform(-10, -5),
     coefficients=False,
     selection=Selection(selections.no_selection),
@@ -75,7 +136,7 @@ def EcorrBasisModel_Umat(
     """Convenience function to return a BasisGP class with a
     quantized ECORR basis."""
 
-    basis = create_quantization_matrix_Umat()
+    basis = create_quantization_matrix_eig(Q=Q)
     prior = ecorr_basis_prior(log10_ecorr=log10_ecorr)
     BaseClass = BasisGP(prior, basis, coefficients=coefficients, selection=selection, name=name)
 
